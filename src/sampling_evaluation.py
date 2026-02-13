@@ -48,7 +48,7 @@ def edm_sample_residual_from_wrapper(
     shape=(64, 64),
     miss_mask: torch.Tensor = None,
     num_steps: int = 40,
-    rho: float = 7.0,  # Karras constant
+    rho: float = 7.0   # Karras constant
 ):
     device = spatial_cond.device
     B, _, H, W = spatial_cond.shape
@@ -87,7 +87,7 @@ def edm_sample_residual_from_wrapper(
     # r at the end of loop is effectively r0_hat (clean residual)
     r_hat = r * (1.0 - miss_mask)
     pred_map = sc_sane[:, 0:1]
-    x_hat = pred_map + r_hat
+    x_hat = pred_map + r_hat # changed line
 
     # 6. Re-apply NaN mask
     valid_bool = (miss_mask < 0.5)
@@ -140,19 +140,23 @@ def sample_one_scenario_from_globals_edm(
     df["Direction_sin"] = dir_sin
     df["Direction_cos"] = dir_cos
 
-    # 3) XGBoost Prediction
+    # 3) Regression Prediction
     X = df[feature_cols]
-    pred_flat = regression_model.predict(X)
-    pred_map  = pred_flat.reshape(H, W)
+    is_valid = (miss_mask.flatten() == 0).cpu().numpy()
+    pred_flat = np.full(len(X), np.nan)
+    if is_valid.any():
+        pred_flat[is_valid] = regression_model.predict(X[is_valid])
+    pred_map = pred_flat.reshape(64, 64)
 
     # 4) Elevation Map
     elev_map = df["elev_mean"].to_numpy().reshape(H, W)
+    elev_var = df["elev_var"].to_numpy().reshape(H, W)
 
     # 5) Build Tensors
     spatial_cond = torch.tensor(
-        np.stack([pred_map, elev_map], axis=0), 
+        np.stack([pred_map, elev_map, elev_var], axis=0), 
         dtype=dtype, device=device
-    ).unsqueeze(0)  # (1, 2, H, W)
+    ).unsqueeze(0)  # (1, 3, H, W)
 
     global_cond = torch.tensor(
         [[category, speed, tide, dir_sin, dir_cos]],
@@ -172,7 +176,7 @@ def sample_one_scenario_from_globals_edm(
         global_cond,
         shape=(H, W),
         miss_mask=miss_mask,
-        num_steps=40 
+        num_steps=40
     )
 
 # ---------------------------------------------------------
@@ -257,8 +261,8 @@ def evaluate_scenarios(
             # --- D. Compare (MSE) ---
             # Convert to numpy (H, W) and orient correctly
             orig_hw  = to_hw(orig_tensor)
-            pred_hw  = np.flipud(to_hw(pred))
-            xhat_hw  = np.flipud(to_hw(x_hat))
+            pred_hw  = to_hw(pred)
+            xhat_hw  = to_hw(x_hat)
             
             # Calculate MSE
             mse_pred = mse_similarity(pred_hw, orig_hw)

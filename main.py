@@ -6,10 +6,11 @@ import os
 from src.data_loader import load_meow_data, load_substation_data, load_elevation_data
 from src.regression_data_preprocess import preprocess_data
 from src.regression_model import FloodXGBModel
+from src.regression_model import FloodLinearModel
 from src.diffusion_data_preprocess import add_regression_pred, build_diffusion_tensors
-from src.diffusion_training import train_diffusion_model
+from src.diffusion_training import train_diffusion_model, load_diffusion_model
 from src.sampling_evaluation import sample_one_scenario_from_globals_edm
-from src.visualization import plot_scenario_comparison, to_hw
+from src.visualization import plot_scenario_comparison, to_hw, check_regression_prediction
 
 
 def main():
@@ -20,7 +21,8 @@ def main():
 
     print("\n--- 2. Processing Pipeline ---")
     # Now returns BOTH formats
-    tensor_images, tabular_data = preprocess_data(gdf, substation, dem_data, dem_transform)
+    tabular_data = preprocess_data(gdf, substation, dem_data, dem_transform)
+
 
     print("\n--- 3. Outputs Ready ---")
     
@@ -30,22 +32,17 @@ def main():
     print("First 5 rows of Tabular Data:")
     pd.set_option('display.max_columns', None)
     
-    # --- B. Check Tensor Output (Diffusion) ---
-    final_tensor = torch.from_numpy(tensor_images).float()
-    print(f"\nDiffusion Tensor: {final_tensor.shape} (Channels, H, W)")
-    
     # 1. Train Regression Model
     print("\n--- 3. Running Baseline Regression ---")
-    xgb_model = FloodXGBModel()
-    metrics = xgb_model.train(tabular_data)
+    regression_model = FloodLinearModel()
+    metrics = regression_model.train(tabular_data)
 
     # --- NEW SECTION: Prepare for Diffusion ---
     print("\n--- 4. Preparing Data for Diffusion Model ---")
 
     # 1. Add XGBoost predictions to the dataframe
     # (This adds the 'xgb_pred' column)
-    tabular_data = add_regression_pred(tabular_data, xgb_model)
-
+    tabular_data = add_regression_pred(tabular_data, regression_model)
     # 2. Build the Tensor Dictionary
     diffusion_data = build_diffusion_tensors(
     target_data=tabular_data,
@@ -53,13 +50,30 @@ def main():
     grid_size=(64, 64),
     global_cols=["Category", "Speed", "Tide", "Direction_sin", "Direction_cos"]
 )
+    feature_cols = [
+        "row", "col", 'latitude', 'longitude',           # Spatial coords            
+        "elev_mean", 'elev_var',            # Elevation
+        "Category", "Speed", "Tide", "Direction_sin", "Direction_cos" # Global Params
+    ]
+    
+    check_regression_prediction(0, regression_model, diffusion_data, tabular_data, feature_cols)
+ 
+    print("\n--- 4. Training Diffusion Model ---")
+    '''
     diffusion_model = train_diffusion_model(
     data_pack=diffusion_data,   # <--- Pass the dictionary directly
     save_dir="models/diffusion",
-    epochs=2,
+    epochs=60,
     batch_size=16
 )
-
+    '''
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    
+    # 1. Load Model AND r0_std
+    path = "models/diffusion/latest_diffusion.pt"
+    diffusion_model, r0_std = load_diffusion_model(path, device=device)
+    
+    # Now you can pass 'model' to your generate_samples function
     # ---------------------------------------------------------
     # 6. Evaluate & Visualize a Specific Scenario
     # ---------------------------------------------------------
@@ -76,8 +90,7 @@ def main():
     # B. Select a Scenario
     target_label = "nw410i2"
     
-    # --- FIX: Use "names" instead of "scenario_names" ---
-    labels = diffusion_data["names"] 
+    labels = diffusion_data["scenario_names"] 
     
     # Safety check: if label doesn't exist, pick the first one
     if target_label not in labels:
@@ -107,17 +120,60 @@ def main():
     # This runs the sampling loop you defined
     x_hat, pred, res = sample_one_scenario_from_globals_edm(
         edm=diffusion_model,
-        regression_model=xgb_model,
+        regression_model=regression_model,
         target_data=tabular_data,
         feature_cols=feature_cols,   
         scenario_name=target_label,
-        category=int(row["Category"]),
-        speed=float(row["Speed"]),
-        tide=int(row["Tide"]),
+        category=row["Category"],
+        speed=row["Speed"],
+        tide=row["Tide"],
         direction_deg=float(row.get("Direction_deg", row.get("Direction", 0.0))),
         device=device,
         miss_mask=miss_mask
     )
+    categories = list(range(1, 9))  # 1 to 8
+    results = []
+
+    print(f"--- Generating sensitivity analysis for Category 1-8 ---")
+
+    for cat in categories:
+    
+        # Run your existing function (Unchanged)
+        # We ignore pred and res here since you only asked for x_hat
+        x_hat_raw, _, _ = sample_one_scenario_from_globals_edm(
+            edm=diffusion_model,
+            regression_model=regression_model,
+            target_data=tabular_data,
+            feature_cols=feature_cols,   
+            scenario_name=target_label,
+            category=cat,            # Varying this
+            speed=row["Speed"],
+            tide=row["Tide"],
+            direction_deg=float(row.get("Direction_deg", row.get("Direction", 0.0))),
+            device=device,
+            miss_mask=miss_mask
+        )
+        
+        # Move to CPU and remove batch dims for plotting
+        # Also apply the r0_std fix manually here if your function returns normalized values
+        # x_hat_corrected = (x_hat_raw - pred) * r0_std + pred (if needed)
+        # For now, we take the result as is:
+        results.append(x_hat_raw.detach().cpu().numpy().squeeze())
+
+    # 2. Plotting in a 2x4 Grid
+    fig, axes = plt.subplots(2, 4, figsize=(20, 10))
+    axes = axes.flatten()
+
+    for i, cat in enumerate(categories):
+        im = axes[i].imshow(results[i], cmap="viridis", origin="lower")
+        axes[i].set_title(f"Category: {cat}")
+        axes[i].axis('off')
+        plt.colorbar(im, ax=axes[i], fraction=0.046, pad=0.04)
+
+    plt.suptitle(f"Sensitivity Analysis: Category Variation for {target_label}", fontsize=16)
+    plt.tight_layout()
+
+    plt.show()
 
     # F. Plot
     os.makedirs("results", exist_ok=True)

@@ -123,8 +123,8 @@ def plot_scenario_comparison(
     # 1. Prepare Data & Align Orientations
     # Note: Applying flipud to predictions to match Original based on your snippet
     orig_hw = to_hw(orig)
-    pred_hw = np.flipud(to_hw(pred))
-    xhat_hw = np.flipud(to_hw(x_hat))
+    pred_hw = to_hw(pred)
+    xhat_hw = to_hw(x_hat)
     
     # 2. Compute Residuals
     # Residual = Truth - Prediction
@@ -149,29 +149,29 @@ def plot_scenario_comparison(
         fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
 
     # Row 0: Original
-    im0 = axes[0, 0].imshow(orig_hw, origin="upper", cmap="viridis")
+    im0 = axes[0, 0].imshow(orig_hw, origin="lower", cmap="viridis")
     axes[0, 0].set_title("Original (Ground Truth)")
     axes[0, 0].axis("off")
     add_cb(im0, axes[0, 0])
 
     # Row 1: XGBoost
-    im1 = axes[1, 0].imshow(pred_hw, origin="upper", cmap="viridis")
+    im1 = axes[1, 0].imshow(pred_hw, origin="lower", cmap="viridis")
     axes[1, 0].set_title("XGBoost Prediction")
     axes[1, 0].axis("off")
     add_cb(im1, axes[1, 0])
 
-    im2 = axes[1, 1].imshow(res_pred, origin="upper", cmap="bwr", vmin=-max_val, vmax=max_val)
+    im2 = axes[1, 1].imshow(res_pred, origin="lower", cmap="bwr", vmin=-max_val, vmax=max_val)
     axes[1, 1].set_title("Residual: Original - XGBoost")
     axes[1, 1].axis("off")
     add_cb(im2, axes[1, 1])
 
     # Row 2: Diffusion
-    im3 = axes[2, 0].imshow(xhat_hw, origin="upper", cmap="viridis")
+    im3 = axes[2, 0].imshow(xhat_hw, origin="lower", cmap="viridis")
     axes[2, 0].set_title("Diffusion Prediction")
     axes[2, 0].axis("off")
     add_cb(im3, axes[2, 0])
 
-    im4 = axes[2, 1].imshow(res_diff, origin="upper", cmap="bwr", vmin=-max_val, vmax=max_val)
+    im4 = axes[2, 1].imshow(res_diff, origin="lower", cmap="bwr", vmin=-max_val, vmax=max_val)
     axes[2, 1].set_title("Residual: Original - Diffusion")
     axes[2, 1].axis("off")
     add_cb(im4, axes[2, 1])
@@ -219,3 +219,112 @@ def plot_scenario_comparison(
         plt.savefig(f"{save_dir}/{scenario_name}_hist.png", dpi=150)
         
     plt.show()
+
+
+
+
+def check_regression_prediction(
+    index, 
+    regression_model, 
+    data_pack, 
+    target_data, 
+    feature_cols, 
+    save_path=None
+):
+    """
+    Plots Ground Truth vs. Regression Prediction for a specific index in data_pack.
+    Handles NaNs by skipping prediction for invalid rows (masking).
+    """
+    # 1. Get Scenario Info
+    # data_pack["names"] might be the key depending on your preprocess, 
+    # but based on previous context checking for "names" or "scenario_names"
+    scenario_name = data_pack["scenario_names"][index] 
+    print(f"--- Checking Index {index}: {scenario_name} ---")
+
+    # 2. Get Ground Truth (from the tensor pack)
+    gt_tensor = data_pack["x0"][index]
+    if isinstance(gt_tensor, torch.Tensor):
+        gt_img = gt_tensor.detach().cpu().numpy().squeeze()
+    else:
+        gt_img = gt_tensor.squeeze()
+
+    # 3. Get Regression Prediction (With NaN Masking)
+    # Filter the big dataframe for this scenario
+    df = target_data[target_data["target_name"] == scenario_name].copy()
+    
+    # Ensure sorting matches the 64x64 grid structure
+    if "row" not in df.columns:
+        df["row"] = np.arange(len(df)) // 64
+        df["col"] = np.arange(len(df)) % 64
+        
+    df = df.sort_values(["row", "col"])
+    
+    X = df[feature_cols]
+
+    # --- NAN HANDLING START ---
+    # Identify rows where ANY feature is NaN
+    valid_rows_mask = X.notna().all(axis=1)
+    
+    # Create a placeholder for predictions filled with NaNs
+    pred_flat = np.full(len(df), np.nan)
+    
+    # Predict ONLY on the valid rows
+    if valid_rows_mask.sum() > 0:
+        X_clean = X[valid_rows_mask]
+        # This will now work because X_clean has no NaNs
+        pred_clean = regression_model.predict(X_clean)
+        # Place predictions back into their original spots
+        pred_flat[valid_rows_mask] = pred_clean
+    else:
+        print("⚠️ Warning: All input features for this scenario are NaN.")
+    # --- NAN HANDLING END ---
+
+    # Reshape to image
+    xgb_img = pred_flat.reshape(64, 64)
+
+    # 4. Calculate Residual (Error)
+    # We only calculate error where BOTH Ground Truth AND Prediction are valid
+    valid_comparison_mask = np.isfinite(gt_img) & np.isfinite(xgb_img)
+    
+    diff = np.full_like(gt_img, np.nan) # Start with all NaNs
+    diff[valid_comparison_mask] = gt_img[valid_comparison_mask] - xgb_img[valid_comparison_mask]
+
+    # 5. Plotting
+    fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+    
+    # Ground Truth
+    im0 = axes[0].imshow(gt_img, cmap="viridis", origin="lower")
+    axes[0].set_title(f"Ground Truth\n({scenario_name})")
+    plt.colorbar(im0, ax=axes[0], fraction=0.046, pad=0.04)
+    
+    # Prediction
+    im1 = axes[1].imshow(xgb_img, cmap="viridis", origin="lower")
+    axes[1].set_title("Regression Prediction\n(NaNs masked)")
+    plt.colorbar(im1, ax=axes[1], fraction=0.046, pad=0.04)
+    
+    # Residual
+    # Use 'bwr' (blue-white-red) to show +/- errors clearly
+    if np.any(valid_comparison_mask):
+        limit = np.nanmax(np.abs(diff)) 
+    else:
+        limit = 1.0
+        
+    im2 = axes[2].imshow(diff, cmap="bwr", vmin=-limit, vmax=limit, origin="lower")
+    axes[2].set_title("Residual\n(Truth - Pred)")
+    plt.colorbar(im2, ax=axes[2], fraction=0.046, pad=0.04)
+
+    plt.tight_layout()
+    
+    if save_path:
+        plt.savefig(save_path)
+        print(f"Plot saved to {save_path}")
+    
+    plt.show()
+
+    # 6. Simple Stats
+    if np.any(valid_comparison_mask):
+        mse = np.mean(diff[valid_comparison_mask]**2)
+        mae = np.mean(np.abs(diff[valid_comparison_mask]))
+        print(f"Stats -> MSE: {mse:.5f} | MAE: {mae:.5f}")
+    else:
+        print("Warning: No valid pixels overlap between Truth and Prediction.")
