@@ -84,7 +84,7 @@ def train_diffusion_model(data_pack,
     # ------------------------------------------------------------------
     # Initialize UNet
     unet = SimpleUNetSmall(
-        in_channels=4,          # [Noisy_Res, Pred, Elev, Mask]
+        in_channels=5,          # [Noisy_Res, Pred, Elev, Mask]
         out_channels=1,         # [Predicted_Res]
         base_ch=32,
         time_emb_dim=128,
@@ -157,3 +157,26 @@ def train_diffusion_model(data_pack,
 
     print(f"✅ Training Complete. Best Val Loss: {best_val_loss:.6f}")
     return model
+
+def load_diffusion_model(model_path, device="cuda"):
+    ckpt = torch.load(model_path, map_location=device)
+
+    # 1. Initialize U-Net
+    unet = SimpleUNetSmall(in_channels=5, out_channels=1, base_ch=32, time_emb_dim=128, cond_dim=5).to(device)
+    
+    # 2. Load Config using your key 'config_dict'
+    cfg = EDMConfig(**ckpt['config_dict'])
+    
+    # 3. Initialize Wrapper
+    model = EDMResidual(unet, cfg, device=device).to(device)
+
+    # 4. Load Weights using your key 'model_state'
+    model.load_state_dict(ckpt['model_state'])
+
+    # 5. Get r0_std
+    r0_std = ckpt['r0_std']
+    if torch.is_tensor(r0_std):
+        r0_std = r0_std.item()
+
+    model.eval()
+    return model, r0_std

@@ -18,25 +18,35 @@ def clip_to_roi(gdf):
 
 # --- 2. Stats Calculation ---
 def add_elevation_stats(gdf, dem_data, transform):
-    print("   -> Calculating elevation stats...")
+    print("   -> Calculating elevation stats (Mean & Variance)...")
     elev_means = []
     elev_vars = []
 
     for geom in gdf.geometry:
-        mask = geometry_mask([geom], transform=transform, out_shape=dem_data.shape, invert=True)
+        # all_touched=True ensures we catch pixels even for small grid cells
+        mask = geometry_mask(
+            [geom],
+            transform=transform,
+            out_shape=dem_data.shape,
+            invert=True,
+            all_touched=True 
+        )
+        
         vals = dem_data[mask]
         
         if vals.size == 0:
+            # If the cell is completely outside the raster (rare given your bounds)
             elev_means.append(np.nan)
             elev_vars.append(np.nan)
         else:
+            # Calculate Mean and Variance ignoring NaNs in the source data
             elev_means.append(np.nanmean(vals))
             elev_vars.append(np.nanvar(vals))
 
     gdf["elev_mean"] = elev_means
     gdf["elev_var"] = elev_vars
+    
     return gdf
-
 # --- 3. Rescaling (Using YOUR specific constants) ---
 def rescale_geometries(gdf, substation):
     print("   -> Rescaling geometries using fixed reference points...")
@@ -124,7 +134,8 @@ def rasterize_to_grid(gdf_scaled, n=64):
     
     final_cols = list(agg.keys())
     
-    # Initialize with NaN  
+    # Initialize with NaN 
+    '''
     images = np.full((len(final_cols), n, n), np.nan, dtype=np.float32)
     
     for c_idx, col in enumerate(final_cols):
@@ -137,6 +148,8 @@ def rasterize_to_grid(gdf_scaled, n=64):
             images[c_idx, iy, ix] = val
             
     return images, final_cols, grid_agg
+    '''
+    return grid_agg
 
 # --- 5. Tabular Dataset Creation ---
 def create_tabular_dataset(grid_agg):
@@ -197,9 +210,9 @@ def preprocess_data(gdf, substation, dem_data, dem_transform):
     gdf_scaled, subs_scaled = rescale_geometries(gdf_clip, substation)
     
     # 4. Rasterize (Unpacks 3 values correctly now!)
-    images, feature_names, grid_agg = rasterize_to_grid(gdf_scaled, n=64)
-    
+    #images, feature_names, grid_agg = rasterize_to_grid(gdf_scaled, n=64)
+    grid_agg = rasterize_to_grid(gdf_scaled, n=64)
     # 5. Tabular
     tabular_data = create_tabular_dataset(grid_agg)
     
-    return images, tabular_data
+    return tabular_data

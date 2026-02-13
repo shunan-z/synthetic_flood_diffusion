@@ -1,0 +1,2 @@
+1. One redundant step data processing to produce image
+2. Try delete scenario name

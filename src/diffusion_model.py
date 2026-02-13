@@ -80,7 +80,7 @@ class UpBlock(nn.Module):
 # ---------------------------------------------------------
 class SimpleUNetSmall(nn.Module):
     def __init__(self,
-                 in_channels=4,    # [Noisy_Residual, XGB_Pred, Elev, Mask]
+                 in_channels=5,    # [Noisy_Residual, XGB_Pred, Elev, Mask]
                  out_channels=1,   # [Predicted_Residual]
                  base_ch=32,
                  time_emb_dim=128,
