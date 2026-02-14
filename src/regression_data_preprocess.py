@@ -216,3 +216,122 @@ def preprocess_data(gdf, substation, dem_data, dem_transform):
     tabular_data = create_tabular_dataset(grid_agg)
     
     return tabular_data
+
+
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import DataLoader, TensorDataset
+import pandas as pd
+import numpy as np
+import os
+import joblib
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import mean_squared_error, r2_score
+
+# --- The PyTorch Model Definition ---
+class SmallCNN(nn.Module):
+    def __init__(self, input_dim):
+        super(SmallCNN, self).__init__()
+        # 1D CNNs expect input shape: (Batch, Channels, Length)
+        # We have 1 channel, and 'input_dim' is our sequence length
+        self.conv_layers = nn.Sequential(
+            nn.Conv1d(in_channels=1, out_channels=16, kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.Conv1d(in_channels=16, out_channels=8, kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.Flatten()
+        )
+        self.fc_layers = nn.Sequential(
+            nn.Linear(8 * input_dim, 32),
+            nn.ReLU(),
+            nn.Linear(32, 1)
+        )
+
+    def forward(self, x):
+        # x shape: (Batch, Features) -> reshape to (Batch, 1, Features)
+        x = x.unsqueeze(1)
+        x = self.conv_layers(x)
+        return self.fc_layers(x)
+
+# --- The Wrapper Class (Matches your FloodLinearModel) ---
+class FloodCNNModel:
+    def __init__(self):
+        self.feature_cols = [
+            "elev_mean", "elev_var", "Category", "Speed", 
+            "Tide", "Direction_sin", "Direction_cos", 
+            "latitude", "longitude"
+        ]
+        self.scaler = StandardScaler()
+        self.model = SmallCNN(len(self.feature_cols))
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.model.to(self.device)
+
+    def train(self, df, epochs=100, batch_size=32, lr=0.001):
+        print("\n--- Training 1D-CNN Model ---")
+        
+        # 1. Handle NaN values (Exactly like your linear model)
+        data = df[self.feature_cols + ["target_value"]].dropna().copy()
+        X = data[self.feature_cols]
+        y = data["target_value"].values.reshape(-1, 1)
+        
+        # 2. Split & Scale
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+        X_train_scaled = self.scaler.fit_transform(X_train)
+        X_test_scaled = self.scaler.transform(X_test)
+        
+        # 3. Convert to Tensors
+        train_ds = TensorDataset(torch.FloatTensor(X_train_scaled), torch.FloatTensor(y_train))
+        train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
+        
+        # 4. Optimizer and Loss
+        criterion = nn.MSELoss()
+        optimizer = optim.Adam(self.model.parameters(), lr=lr)
+        
+        # 5. Training Loop
+        self.model.train()
+        for epoch in range(epochs):
+            for batch_X, batch_y in train_loader:
+                batch_X, batch_y = batch_X.to(self.device), batch_y.to(self.device)
+                optimizer.zero_grad()
+                outputs = self.model(batch_X)
+                loss = criterion(outputs, batch_y)
+                loss.backward()
+                optimizer.step()
+        
+        # 6. Evaluate
+        self.model.eval()
+        with torch.no_grad():
+            train_pred = self.model(torch.FloatTensor(X_train_scaled).to(self.device)).cpu().numpy()
+            test_pred = self.model(torch.FloatTensor(X_test_scaled).to(self.device)).cpu().numpy()
+        
+        train_rmse = mean_squared_error(y_train, train_pred) ** 0.5
+        test_rmse = mean_squared_error(y_test, test_pred) ** 0.5
+        test_r2 = r2_score(y_test, test_pred)
+        
+        print(f"Train RMSE: {train_rmse:.4f} | Test RMSE: {test_rmse:.4f} | Test R²: {test_r2:.4f}")
+        return {"train_rmse": train_rmse, "test_rmse": test_rmse, "test_r2": test_r2}
+
+    def predict(self, X_new):
+        self.model.eval()
+        X_subset = X_new[self.feature_cols]
+        X_scaled = self.scaler.transform(X_subset)
+        X_tensor = torch.FloatTensor(X_scaled).to(self.device)
+        
+        with torch.no_grad():
+            preds = self.model(X_tensor).cpu().numpy()
+        return preds.flatten()
+
+    def save(self, filepath):
+        os.makedirs(os.path.dirname(filepath), exist_ok=True)
+        # We save the whole object; note that joblib works for PyTorch objects 
+        # but torch.save is preferred for the weights alone. For consistency, we'll use joblib.
+        joblib.dump(self, filepath)
+        print(f"✅ CNN Model saved to: {filepath}")
+
+    @staticmethod
+    def load(filepath):
+        model = joblib.load(filepath)
+        print(f"✅ CNN Model loaded from: {filepath}")
+        return model

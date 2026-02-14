@@ -5,10 +5,9 @@ import os
 # Import the 3 specific functions
 from src.data_loader import load_meow_data, load_substation_data, load_elevation_data
 from src.regression_data_preprocess import preprocess_data
-from src.regression_model import FloodXGBModel
-from src.regression_model import FloodLinearModel
+from src.regression_model import FloodXGBModel,FloodLinearModel
 from src.diffusion_data_preprocess import add_regression_pred, build_diffusion_tensors
-from src.diffusion_training import train_diffusion_model, load_diffusion_model
+from src.diffusion_training import train_diffusion_model, load_diffusion_model, prepare_diffusion_data
 from src.sampling_evaluation import sample_one_scenario_from_globals_edm
 from src.visualization import plot_scenario_comparison, to_hw, check_regression_prediction
 
@@ -28,7 +27,7 @@ def main():
     
 
     # --- A. Check Tabular Data (XGBoost) ---
-    print(f"XGBoost DataFrame: {tabular_data.shape} rows")
+    print(f"Regression DataFrame: {tabular_data.shape} rows")
     print("First 5 rows of Tabular Data:")
     pd.set_option('display.max_columns', None)
     
@@ -56,23 +55,36 @@ def main():
         "Category", "Speed", "Tide", "Direction_sin", "Direction_cos" # Global Params
     ]
     
-    check_regression_prediction(0, regression_model, diffusion_data, tabular_data, feature_cols)
+    check_regression_prediction(30, regression_model, diffusion_data, tabular_data, feature_cols)
  
     print("\n--- 4. Training Diffusion Model ---")
-    '''
-    diffusion_model = train_diffusion_model(
-    data_pack=diffusion_data,   # <--- Pass the dictionary directly
-    save_dir="models/diffusion",
-    epochs=60,
-    batch_size=16
-)
-    '''
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+
     
     # 1. Load Model AND r0_std
+    device = "cuda" if torch.cuda.is_available() else "cpu"
     path = "models/diffusion/latest_diffusion.pt"
     diffusion_model, r0_std = load_diffusion_model(path, device=device)
     
+    '''
+    train_ds, test_ds, cond_dim = prepare_diffusion_data(
+        data_pack=diffusion_data, 
+        save_dir="models/diffusion",
+        train_split=0.8
+    )
+    
+    # 2. Train from Scratch (100 Epochs)
+    # By not passing a 'model' argument, the function initializes a new one
+    diffusion_model = train_diffusion_model(
+        train_dataset=train_ds,
+        test_dataset=test_ds,
+        cond_dim=cond_dim,
+        model=None,               # Explicitly None to train from scratch
+        save_dir="models/diffusion",
+        epochs=100,               # Updated to 100 epochs
+        batch_size=16,
+        device=device
+    )
+    '''
     # Now you can pass 'model' to your generate_samples function
     # ---------------------------------------------------------
     # 6. Evaluate & Visualize a Specific Scenario
