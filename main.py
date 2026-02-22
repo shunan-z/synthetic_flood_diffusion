@@ -62,10 +62,10 @@ def main():
     
     # 1. Load Model AND r0_std
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    path = "models/diffusion/latest_diffusion.pt"
-    diffusion_model, r0_std = load_diffusion_model(path, device=device)
+    #path = "models/diffusion/latest_diffusion.pt"
+    #diffusion_model, r0_std = load_diffusion_model(path, device=device)
     
-    '''
+    
     train_ds, test_ds, cond_dim = prepare_diffusion_data(
         data_pack=diffusion_data, 
         save_dir="models/diffusion",
@@ -80,11 +80,11 @@ def main():
         cond_dim=cond_dim,
         model=None,               # Explicitly None to train from scratch
         save_dir="models/diffusion",
-        epochs=100,               # Updated to 100 epochs
+        epochs=50,               # Updated to 100 epochs
         batch_size=16,
         device=device
     )
-    '''
+    
     # Now you can pass 'model' to your generate_samples function
     # ---------------------------------------------------------
     # 6. Evaluate & Visualize a Specific Scenario

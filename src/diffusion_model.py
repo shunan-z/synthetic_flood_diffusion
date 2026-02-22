@@ -237,12 +237,21 @@ class EDMResidual(nn.Module):
 
         # 3. Denoise
         r0_hat = self.denoise(r_t, sigma, sc_sane, miss_mask, global_cond)
+        # Adjust 'lambda_neg' to control how strictly you want to enforce this
+        lambda_neg = 10.0 
+        epsilon = 1e-3
+        neg_penalty = neg_penalty = torch.where(r0_hat < -epsilon, r0_hat**2, 0.0) * valid_mask
 
         # 4. Loss (MSE on valid pixels only)
         mse = ((r0_hat - r0)**2) * valid_mask
-        mse_per_sample = mse.sum(dim=(1,2,3)) / (valid_mask.sum(dim=(1,2,3)) + 1e-8)
-        
+
+        # Combine MSE and Penalty per pixel
+        total_pixel_loss = mse + (lambda_neg * neg_penalty)
+    
+        mse_per_sample = total_pixel_loss.sum(dim=(1,2,3)) / (valid_mask.sum(dim=(1,2,3)) + 1e-8)
+    
         loss = (self.cfg.loss_weight(sigma) * mse_per_sample).mean()
+
         return loss
 
     @torch.no_grad()

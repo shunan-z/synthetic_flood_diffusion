@@ -249,8 +249,9 @@ class FloodLinearModel:
         # Scale the new data using the ALREADY FITTED scaler
         X_scaled = self.scaler.transform(X_subset)
         
-        #return self.model.predict(X_scaled)
-        return np.zeros(len(X_new))
+        return self.model.predict(X_scaled)
+        #return np.zeros(len(X_new))
+        
     def save(self, filepath):
         """
         Saves the entire class instance (model + scaler) to a file.
