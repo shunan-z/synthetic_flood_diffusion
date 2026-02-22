@@ -1,0 +1,11 @@
+[33mea27531[m[33m ([m[1;36mHEAD -> [m[1;32mmain[m[33m, [m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m)[m HEAD@{0}: reset: moving to origin/main
+[33mfdd9d33[m HEAD@{1}: reset: moving to HEAD
+[33mfdd9d33[m HEAD@{2}: commit: only diffusion
+[33mebf778e[m HEAD@{3}: commit: diffusion only
+[33maefec6b[m HEAD@{4}: commit: Experiment
+[33m2235e02[m HEAD@{5}: commit: minor changes
+[33mea27531[m[33m ([m[1;36mHEAD -> [m[1;32mmain[m[33m, [m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m)[m HEAD@{6}: commit: linear regression
+[33mf8fb43a[m HEAD@{7}: reset: moving to origin/main
+[33me4a6592[m HEAD@{8}: commit: Sampling
+[33mb79aec3[m HEAD@{9}: commit: Add the regression and diffusion models
+[33m00aaca5[m HEAD@{10}: clone: from https://github.com/shunan-z/synthetic_flood_diffusion.git
